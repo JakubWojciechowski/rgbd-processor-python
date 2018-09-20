@@ -16,7 +16,7 @@ def rotateAroundPoint(center, pos, s, c):
     ynew += center[1]
     return xnew, ynew
 def setupInputMatrix(depthAddr, rawDepthAddr, camAddr):
-    root = 'C:/Projects/rgbd-processor-python/imgs/'
+    root = '/home/jakub/libraries/rgbd-processor-python/imgs/'
     depthName = "depth.png"
     rawDepthName = "rawdepth.png"
     camName = "intrinsics.txt"

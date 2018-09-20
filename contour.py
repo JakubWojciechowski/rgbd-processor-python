@@ -101,3 +101,4 @@ for rect in boundingboxes[pickupIds]:
 # im3 = cv2.drawContours(im, [cnt], 0, (0,255,0), 1)
 cv2.imshow('image', im)
 cv2.waitKey(0)
+cv2.destroyAllWindows()

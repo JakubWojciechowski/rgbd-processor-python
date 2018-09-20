@@ -3,13 +3,67 @@ import numpy as np
 import imageio
 import math
 from os import listdir
-from os.path import isfile, join
+from os.path import isfile, join, abspath, exists, curdir, expanduser
 from matplotlib import cm
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from camera import cropCamera,getCameraParam, processCamMat
 from depthImgProcessor import processDepthImage
 from utils import checkDirAndCreate
+from glob import glob
+import json
+import cv2
+import types
+
+ROOTPATH = expanduser('~/data/')
+
+
+ans = {
+  1:  'wall',
+  2:  'floor',
+  3:  'cabinet',
+  4:  'bed',
+  5:  'chair',
+  6:  'sofa',
+  7:  'table',
+  8:  'door',
+  9:  'window',
+  10:  'bookshelf',
+  11:  'picture',
+  12:  'counter',
+  13:  'blinds',
+  14:  'desk',
+  15:  'shelves',
+  16:  'curtain',
+  17:  'dresser',
+  18:  'pillow',
+  19:  'mirror',
+  20:  'floor_mat',
+  21:  'clothes',
+  22:  'ceiling',
+  23:  'books',
+  24:  'fridge',
+  25:  'tv',
+  26:  'paper',
+  27:  'towel',
+  28:  'shower_curtain',
+  29:  'box',
+  30:  'whiteboard',
+  31:  'person',
+  32:  'night_stand',
+  33:  'toilet',
+  34:  'sink',
+  35:  'lamp',
+  36:  'bathtub',
+  37:  'bag'
+}
+
+def search_in_dictionary(dictionary, search_value):
+    for key, value in dictionary.items():
+        if value == search_value:
+            return key
+
+
 def getHHAImg(depthImage, missingMask,cameraMatrix):
     pc, N, yDir, h, R = processDepthImage(depthImage * 100, missingMask, cameraMatrix)
 
@@ -59,13 +113,13 @@ def getHeightMap(depthImage, missingMask,cameraMatrix):
     fig.colorbar(surf, shrink=0.5, aspect=5)
     plt.show()
 
-def main():
-    rootpath = 'C:/Projects/SUNRGB-dataset/'
+def generate_hha(chooseSplit = "training"):
+    rootpath = ROOTPATH
     outputpath = 'imgs/'
-    chooseSplit = "testing"
+
     olderr = np.seterr(all='ignore')
     try:
-        fp = open(rootpath+'sunrgbd_'+chooseSplit+'_images.txt', 'r')
+        fp = open(rootpath+'SUNRGBD/'+'sunrgbd_'+chooseSplit+'_images.txt', 'r')
         filenameSet = fp.readlines()
     finally:
         fp.close()
@@ -91,30 +145,108 @@ def main():
         imageio.imwrite(outputpath + chooseSplit + '/hha/' + str(idx+1) + '.png',HHA)
         imageio.imwrite(outputpath + chooseSplit + '/height/' + str(idx+1) + '.png', HHA[:,:,1])
 
-if __name__ == "__main__":
-    main()
+def get_paths(image_path):
+    depth_path = image_path.replace('image', 'depth').replace('.jpg', '.png')
+    intrinsics_path = abspath(join(image_path, '../../intrinsics.txt'))
+    annotation_path = abspath(join(image_path, '../../annotation2Dfinal/index.json'))
+    assert(exists(depth_path))
+    assert(exists(intrinsics_path))
+    assert(exists(annotation_path))
+    return depth_path, intrinsics_path, annotation_path
 
-# def main():
-#     rootpath = 'C:\Projects\SUNRGB-dataset\'
-#     chooseSplit = "training"
-#     olderr = np.seterr(all='ignore')
-#     try:
-#         fp = open(rootpath+'sunrgbd_'+chooseSplit+'_images.txt', 'r')
-#         filenameSet = fp.readlines()
-#     finally:
-#         fp.close()
-#     dataset_set = ['kinect2data', 'align_kv2', 'NYUdata', 'b3dodata', 'sun3ddata','xtion_align_data','realsense']
-#
-#
-#
-#
-#     depthImage = imageio.imread("imgs/depth.png").astype(float)/1000
-#     rawDepth = imageio.imread("imgs/rawdepth.png").astype(float)
-#     missingMask = (rawDepth == 0)
-#
-#     # getHeightMap(depthImage, missingMask)
-#     HHA = getHHAImg(depthImage, missingMask, cameraMatrix)
-#     imageio.imwrite(outputpath + 'hha/' + str(idx) + '.png',HHA)
-#     imageio.imwrite(outputpath + 'height' + .png', HHA[:,:,1])
-# if __name__ == "__main__":
-#     main()
+def generate_map(annotation_path, h, w):
+    mask = np.zeros((h, w), dtype = np.uint8)
+    try:
+        with open(annotation_path, 'r') as f:
+            data = json.load(f)
+    except:
+        with open(annotation_path, 'r') as f:
+            string_data = f.read()
+        if '\\' in string_data:
+            string_data = string_data.replace('\\', '')
+            data = json.loads(string_data)
+            print('FIXED')
+        else:
+            print('ERROR decoding {}'.format(annotation_path))
+
+    for poly in data['frames'][0]['polygon']:
+        object_id = poly['object']
+        if object_id >= len(data['objects']):
+            continue
+        obj_name = data['objects'][object_id]['name']
+        obj_id = search_in_dictionary(ans, obj_name)
+        if not obj_id: #class not in 37 classes given in ans
+            continue
+        if not isinstance(poly['x'], list):
+            continue
+        cnts = np.expand_dims(np.stack([poly['x'], poly['y']], axis=1), axis = 1).astype(np.int)
+        if len(cnts) > 0:
+            mask = cv2.drawContours(mask, [cnts], 0 , obj_id, -1)
+    return mask
+
+def test_annotations(annotation_path):
+    try:
+        with open(annotation_path, 'r') as f:
+            data = json.load(f)
+    except:
+        with open(annotation_path, 'r') as f:
+            string_data = f.read()
+        if '\\' in string_data:
+            string_data = string_data.replace('\\', '')
+            data = json.loads(string_data)
+            print('FIXED')
+        else:
+            print('ERROR decoding {}'.format(annotation_path))
+
+
+def generate_targets(chooseSplit = "training"):
+    rootpath = ROOTPATH
+    outputpath = 'imgs/'
+    olderr = np.seterr(all='ignore')
+    try:
+        fp = open(rootpath+'SUNRGBD/'+'sunrgbd_'+chooseSplit+'_images.txt', 'r')
+        filenameSet = fp.readlines()
+    finally:
+        fp.close()
+    checkDirAndCreate(outputpath + chooseSplit, checkNameList=['targets'])
+    for idx, file in enumerate(filenameSet):
+        split_items = file.split('/')
+        depthAddr_root  = rootpath + '/'.join(p for p in split_items[:-2]) + '/depth_bfx/' #+ split_items[-1].split('.')[0]+'_abs.png'
+        depthAddr = [depthAddr_root + f for f in listdir(depthAddr_root) if isfile(join(depthAddr_root,f ))][0]
+
+        depthImage = imageio.imread(depthAddr).astype(float)/10000
+        h, w = depthImage.shape
+
+        annotation_path = rootpath + '/'.join(p for p in split_items[:-2]) + '/annotation2Dfinal/index.json'
+        #test_annotations(annotation_path)
+        mask = generate_map(annotation_path, h, w)
+
+        imageio.imwrite(outputpath + chooseSplit + '/targets/' + str(idx+1) + '.png',mask)
+
+def generate_lst(chooseSplit = "training"):
+    rootpath = ROOTPATH
+    outputpath = 'imgs/'
+    try:
+        fp = open(rootpath+'SUNRGBD/'+'sunrgbd_'+chooseSplit+'_images.txt', 'r')
+        filenameSet = fp.readlines()
+    finally:
+        fp.close()
+    with open('sunrgbd_{}.lst'.format(chooseSplit), 'w') as f:
+        for idx, file in enumerate(filenameSet):
+            imgname = abspath(join(rootpath, file)).rstrip()
+            segname = abspath(join(curdir, outputpath, chooseSplit, 'targets','{}.png'.format(idx+1)))
+            split_items = file.split('/')
+            depthAddr_root  = rootpath + '/'.join(p for p in split_items[:-2]) + '/depth_bfx/'
+            depthname = [depthAddr_root + f for f in listdir(depthAddr_root) if isfile(join(depthAddr_root,f ))][0]
+            HHAname = abspath(join(curdir, outputpath, chooseSplit, 'hha','{}.png'.format(idx+1)))
+            assert(exists(imgname) and exists(segname) and exists(depthname) and exists(HHAname))
+            f.write('{} {} {} {}\n'.format(imgname, segname, depthname, HHAname))
+
+
+
+
+if __name__ == "__main__":
+    for chooseSplit in ["training", 'testing']:
+        generate_hha(chooseSplit)
+        generate_targets(chooseSplit)
+        generate_lst(chooseSplit)
